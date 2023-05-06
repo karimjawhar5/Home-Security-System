@@ -9,6 +9,7 @@ const char* ssid = "BELL449";
 const char* password = "E1557EAE";
 
 int potValue;
+bool ledState;
 
 WiFiServer espServer(80);
 
@@ -17,7 +18,8 @@ void setup() {
   
   pinMode(LED_PIN, OUTPUT);
   pinMode(POT_PIN, INPUT);
-  digitalWrite(LED_PIN, LOW);
+  ledState = LOW;
+  digitalWrite(LED_PIN, ledState);
 
   Serial.print("\n");
   Serial.print("Connecting to: ");
@@ -58,35 +60,39 @@ void loop() {
   String request = client.readStringUntil('\r'); /* Read the first line of the request from client */
   Serial.println(request);
   client.flush();
+  client.setTimeout(300);
   
   if (request.indexOf("/LED") != -1) {
     // Read request body
-    String body = "";
-    while (client.connected()) {
-      String line = client.readStringUntil('\r');
-      if (line == "\n") {
-        break;
-      }
-    }
-    body = client.readStringUntil('\r');
+    String requestStr = client.readString();
+    Serial.println("done reading request");
+  
+    // Extract body from request
+    int bodyStart = requestStr.indexOf("\r\n\r\n") + 4; // +4 to skip the \r\n\r\n
+    String body = requestStr.substring(bodyStart);
+    Serial.println("done getting the body");
   
     // Parse JSON payload
     DynamicJsonDocument jsonDoc(1024);
     deserializeJson(jsonDoc, body);
+    Serial.println("done deserializing the body");
   
-    String status = jsonDoc["status"].as<String>();
-    Serial.print("Status: ");
-    Serial.println(status);
+    String state = jsonDoc["state"].as<String>();
+    Serial.print("state: ");
+    Serial.println(state);
   
-    if (status == "on") {
-      digitalWrite(LED_PIN, HIGH);
-      sendJsonResponse(client, "success", "LED turned on");
-    } else if (status == "off") {
-      digitalWrite(LED_PIN, LOW);
-      sendJsonResponse(client, "success", "LED turned off");
+    if (state == "on") {
+      ledState = HIGH;
+      digitalWrite(LED_PIN, ledState);
+      sendJsonResponse(client, "success", "LED turned ON");
+    } else if (state == "off") {
+      ledState = LOW;
+      digitalWrite(LED_PIN, ledState);
+      sendJsonResponse(client, "success", "LED turned OFF");
     } else {
-      sendJsonResponse(client, "error", "Invalid status value");
+      sendJsonResponse(client, "error", "Invalid state value");
     }
+    Serial.println("done everything");
   }
   else if(request.indexOf("/POT") != -1){
     potValue = analogRead(POT_PIN);
@@ -99,6 +105,22 @@ void loop() {
       sendJsonResponse(client, "error", "no potentiometer value available");
     }
     
+  }
+  else if(request.indexOf("/DATA") != -1){
+    potValue = analogRead(POT_PIN);
+    char potValueStr[16];
+    itoa(potValue, potValueStr, 10);
+    char ledStateStr[2];
+    if (ledState) {
+      strcpy(ledStateStr, "1");
+    } else {
+      strcpy(ledStateStr, "0");
+    }
+//    char message[18];
+//    strcpy(message, ledStateStr);
+//    strcat(message, potValueStr);
+    sendJsonResponse(client, "success", ledStateStr, potValueStr);
+    //sendJsonResponse(client, "error", "no data available");
   }
   else {
     client.println("HTTP/1.1 404 Not Found");
@@ -119,6 +141,26 @@ void sendJsonResponse(WiFiClient client, const char* status, const char* message
   StaticJsonDocument<128> doc;
   doc["status"] = status;
   doc["message"] = message;
+  const JsonObject& response = doc.as<JsonObject>();
+  String jsonResponse;
+  serializeJson(response, jsonResponse);
+
+  client.println("HTTP/1.1 200 OK");
+  client.println("Content-Type: application/json");
+  client.println("Access-Control-Allow-Origin: *"); // allow requests from any domain
+  client.println("Connection: close");
+  client.print("Content-Length: ");
+  client.println(jsonResponse.length());
+  client.println();
+  client.println(jsonResponse);
+}
+
+
+void sendJsonResponse(WiFiClient client, const char* status, const char* ledState, const char* potValue) {
+  StaticJsonDocument<128> doc;
+  doc["status"] = status;
+  doc["led"] = ledState;
+  doc["pot"] = potValue;
   const JsonObject& response = doc.as<JsonObject>();
   String jsonResponse;
   serializeJson(response, jsonResponse);
